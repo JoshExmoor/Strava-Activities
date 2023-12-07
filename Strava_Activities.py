@@ -1,5 +1,3 @@
-from email.policy import default
-from pydoc import cli
 import requests
 import urllib3
 import pandas as pd
@@ -58,17 +56,12 @@ def retrieve_access_token(client_id: str, client_secret: str, refresh_token: str
     print("Requesting Token...\n")
     res = requests.post(AUTH_URL, data=payload, verify=False)
     access_token = res.json()['access_token']
-    print("Access Token = {}\n".format(access_token))
+    # print("Access Token = {}\n".format(access_token))
     return access_token
 
 
-def get_activities(access_token: str, output_csv: str, per_page: int = 200, activity_type: str = "Run", activities_number=100000):
+def get_activities(access_token: str, output_csv: str, per_page: int = 50, activity_type: str = "Run", activities_number=100000):
 
-    # Now we need to import a list of activities and some top level stats about them.
-    # This will be 1 row per activity.
-
-    # Initialize the dataframe
-    #activities = pd.DataFrame(columns=col_names)
     activities = []
 
     header = {'Authorization': 'Bearer ' + access_token}
@@ -79,7 +72,8 @@ def get_activities(access_token: str, output_csv: str, per_page: int = 200, acti
 
         # get page of activities from Strava
         param = {'per_page': per_page, 'page': page}
-        print(f"Retrieving Page {page}, found {len(activities)} activities")
+
+        print(f"Found {len(activities)} activities", end='\r')
         results = requests.get(ACTIVITIES_URL, headers=header, params=param).json()
 
         # if no results then exit loop
@@ -91,9 +85,7 @@ def get_activities(access_token: str, output_csv: str, per_page: int = 200, acti
         # increment page
         page += 1
 
-
-    #print(json.dumps(format_activity(activities[0]), indent=2))
-    #print(json.dumps(select_columns(format_activity(activities[0]), col_names), indent=2))
+    print(f"Found {len(activities)} activities")
 
     with open('raw_activities.json', 'w') as f:
         json.dump(activities, f, indent=2)
@@ -103,13 +95,9 @@ def get_activities(access_token: str, output_csv: str, per_page: int = 200, acti
     for activity in activities:
         if activity["type"] != activity_type:
             continue
-        #print(f"Activity: {activity['id']}")
-        #print(json.dumps(activity, indent=2))
         formatted_activity = format_activity(activity)
         filtered_activity = select_columns(formatted_activity, COL_NAMES)
         output_activities.append(filtered_activity)
-
-    #print(json.dumps(output_activities, indent=2))
 
     df = pd.DataFrame.from_dict(output_activities)
     df.to_csv(output_csv, index=False)
@@ -119,13 +107,11 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description='Retrieve Strava Activities.')
     parser.add_argument('output_filename')
-    parser.add_argument('-i', "--client_id", required=True )
+    parser.add_argument('-i', "--client_id", required=True)
     parser.add_argument("-c", "--client_secret", required=True)
     parser.add_argument("-r", "--refresh_token", required=True)
     parser.add_argument("-a", "--activities_number", required=False, default=100000)
     args = parser.parse_args()
-
-    print(args)
 
     output_filename = args.output_filename
     client_id = args.client_id
