@@ -2,6 +2,7 @@
 *sync-conflict-*
 *.json
 *.csv
+.creds
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
