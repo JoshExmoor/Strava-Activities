@@ -4,18 +4,16 @@ import pandas as pd
 import json
 import datetime
 import argparse
+import logging
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 AUTH_URL = "https://www.strava.com/oauth/token"
 ACTIVITIES_URL = "https://www.strava.com/api/v3/athlete/activities"
-COL_NAMES = ['start_date_local', 'type', 'name', 'distance_mi', 'total_time', 'avg_pace', 'total_elevation_gain_ft', 'calories', 'average_heartrate', 'max_heartrate', 'URL']
+GEAR_URL = "https://www.strava.com/api/v3/gear/"
+COL_NAMES = ['start_date_local', 'type', 'name', 'distance_mi', 'total_time', 'avg_pace', 'total_elevation_gain_ft', 'average_heartrate', 'max_heartrate', 'URL', 'gear_name']
 METERS_TO_MILES = 1/1609.344
 METERS_TO_FEET = 0.3048
-
-
-def filter_activity(activity: dict):
-    return {key: activity[key] for key in COL_NAMES}
 
 
 def format_activity(activity: dict) -> dict:
@@ -60,7 +58,7 @@ def retrieve_access_token(client_id: str, client_secret: str, refresh_token: str
     return access_token
 
 
-def get_activities(access_token: str, output_csv: str, per_page: int = 50, activity_type: str = "Run", activities_number=100000):
+def get_activities(access_token: str, per_page: int = 50, activity_type: str = "Run", activities_number=100000):
 
     activities = []
 
@@ -82,7 +80,9 @@ def get_activities(access_token: str, output_csv: str, per_page: int = 50, activ
 
         activities += results
 
-        # increment page
+        if(len(activities) >= activities_number):
+            break
+
         page += 1
 
     print(f"Found {len(activities)} activities")
@@ -90,17 +90,57 @@ def get_activities(access_token: str, output_csv: str, per_page: int = 50, activ
     with open('raw_activities.json', 'w') as f:
         json.dump(activities, f, indent=2)
 
+    gear_added = add_gear_info(activities, access_token)
+
     output_activities = []
 
-    for activity in activities:
+    for activity in gear_added:
         if activity["type"] != activity_type:
             continue
         formatted_activity = format_activity(activity)
         filtered_activity = select_columns(formatted_activity, COL_NAMES)
         output_activities.append(filtered_activity)
 
+    return output_activities
+
+
+def write_csv(output_activities: dict, output_csv: str) -> None:
     df = pd.DataFrame.from_dict(output_activities)
     df.to_csv(output_csv, index=False)
+
+
+def get_gear_info(access_token: str, gear_id: str) -> str:
+    header = {'Authorization': 'Bearer ' + access_token}
+    results = requests.get(GEAR_URL + gear_id, headers=header).json()
+    logging.debug(f"Received Gear: {results['name']}")
+    return results['name']
+
+
+def add_gear_info(activities: list, access_token: str) -> list:
+    gear_list = {}
+    output_activities = []
+    gear_count = 0
+
+    for item in activities:
+        if not item['gear_id']:
+            item['gear_name'] = None
+            continue
+        try:
+            if item['gear_id'] in gear_list.keys():
+                item['gear_name'] = gear_list[item['gear_id']]
+            else:
+                gear_list[item['gear_id']] = get_gear_info(access_token, item['gear_id'])
+                item['gear_name'] = gear_list[item['gear_id']]
+                gear_count += 1
+                print(f"Gear Count: {gear_count}", end='\r')
+        except KeyError:
+            item['gear_name'] = None
+
+        logging.debug(json.dumps(gear_list, indent=2))
+        output_activities.append(item)
+
+    print("\n")
+    return output_activities
 
 
 if __name__ == "__main__":
@@ -110,7 +150,7 @@ if __name__ == "__main__":
     parser.add_argument('-i', "--client_id", required=True)
     parser.add_argument("-c", "--client_secret", required=True)
     parser.add_argument("-r", "--refresh_token", required=True)
-    parser.add_argument("-a", "--activities_number", required=False, default=100000)
+    parser.add_argument("-a", "--activities_number", required=False, type=int, default=100000)
     args = parser.parse_args()
 
     output_filename = args.output_filename
@@ -119,4 +159,5 @@ if __name__ == "__main__":
     refresh_token = args.refresh_token
 
     access_token = retrieve_access_token(client_id=client_id, client_secret=client_secret, refresh_token=refresh_token)
-    get_activities(access_token=access_token, output_csv=output_filename)
+    output_activities = get_activities(access_token=access_token, activities_number=args.activities_number)
+    write_csv(output_activities, output_filename)
