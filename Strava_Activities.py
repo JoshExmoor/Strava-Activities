@@ -18,10 +18,28 @@ METERS_TO_FEET = 0.3048
 
 def format_activity(activity: dict) -> dict:
     formatted_activity = activity
-    formatted_activity["distance_mi"] = round(activity["distance"] * METERS_TO_MILES, 2)
-    formatted_activity["total_elevation_gain_ft"] = round(activity["total_elevation_gain"] / METERS_TO_FEET, 0)
-    formatted_activity["total_time"] = str(datetime.timedelta(seconds=activity["elapsed_time"]))
-    formatted_activity["start_date_local"] = activity["start_date_local"].split("T")[0]
+
+    try:
+        formatted_activity["distance_mi"] = round(activity["distance"] * METERS_TO_MILES, 2)
+    except KeyError:
+        formatted_activity["distance_mi"] = 0
+
+    try:
+        formatted_activity["total_elevation_gain_ft"] = round(activity["total_elevation_gain"] / METERS_TO_FEET, 0)
+    except KeyError:
+        formatted_activity["total_elevation_gain_ft"] = 0
+    
+    try:
+        formatted_activity["total_time"] = str(datetime.timedelta(seconds=activity["elapsed_time"]))
+    except KeyError:
+        formatted_activity["total_time"] = 0
+
+    try:
+        formatted_activity["start_date_local"] = activity["start_date_local"].split("T")[0]
+    except KeyError:
+        formatted_activity["start_date_local"] = "1900-01-01"
+    
+    
     formatted_activity["URL"] = "https://www.strava.com/activities/" + str(activity["id"])
     if activity["average_speed"]:
         formatted_activity["avg_pace"] = str(datetime.timedelta(seconds=((26.8224 / activity["average_speed"]) * 60)))
@@ -54,7 +72,7 @@ def retrieve_access_token(client_id: str, client_secret: str, refresh_token: str
     print("Requesting Token...\n")
     res = requests.post(AUTH_URL, data=payload, verify=False)
     access_token = res.json()['access_token']
-    # print("Access Token = {}\n".format(access_token))
+    logging.debug("Access Token = {}\n".format(access_token))
     return access_token
 
 
@@ -87,12 +105,16 @@ def get_activities(access_token: str, per_page: int = 50, activity_type: str = "
 
     print(f"Found {len(activities)} activities")
 
-    with open('raw_activities.json', 'w') as f:
-        json.dump(activities, f, indent=2)
+    if __debug__:
+        logging.debug("Writing raw_activities.json")
+        with open('raw_activities.json', 'w') as f:
+            json.dump(activities, f, indent=2)
 
     gear_added = add_gear_info(activities, access_token)
 
     output_activities = []
+
+    print("Acitivity Type:", activity_type)
 
     for activity in gear_added:
         if activity["type"] != activity_type:
@@ -104,8 +126,9 @@ def get_activities(access_token: str, per_page: int = 50, activity_type: str = "
     return output_activities
 
 
-def write_csv(output_activities: dict, output_csv: str) -> None:
+def write_csv(output_activities: dict, output_csv: str, reverse_sort: bool = False) -> None:
     df = pd.DataFrame.from_dict(output_activities)
+    df = df.sort_values(by=["start_date_local", "URL"], ascending=reverse_sort)
     df.to_csv(output_csv, index=False)
 
 
@@ -123,7 +146,8 @@ def add_gear_info(activities: list, access_token: str) -> list:
 
     for item in activities:
         if not item['gear_id']:
-            item['gear_name'] = None
+            item['gear_name'] = "No Gear Listed"
+            output_activities.append(item)
             continue
         try:
             if item['gear_id'] in gear_list.keys():
@@ -151,13 +175,19 @@ if __name__ == "__main__":
     parser.add_argument("-c", "--client_secret", required=True)
     parser.add_argument("-r", "--refresh_token", required=True)
     parser.add_argument("-a", "--activities_number", required=False, type=int, default=100000)
+    parser.add_argument("-s", "--reverse_sort", required=False, action='store_true', help="Sort from oldest to newest rather than how the API returns the data.")
+    parser.add_argument('-t', "--activity_type", required=False, default="Run")
     args = parser.parse_args()
 
     output_filename = args.output_filename
     client_id = args.client_id
     client_secret = args.client_secret
     refresh_token = args.refresh_token
+    activity_type = args.activity_type
 
     access_token = retrieve_access_token(client_id=client_id, client_secret=client_secret, refresh_token=refresh_token)
-    output_activities = get_activities(access_token=access_token, activities_number=args.activities_number)
-    write_csv(output_activities, output_filename)
+    output_activities = get_activities(access_token=access_token, activities_number=args.activities_number, activity_type=activity_type)
+    try:
+        write_csv(output_activities, output_filename, reverse_sort=args.reverse_sort)
+    except:
+        print(json.dumps(output_activities, indent=2))
